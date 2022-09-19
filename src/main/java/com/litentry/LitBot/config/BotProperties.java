@@ -20,4 +20,5 @@ public class BotProperties {
     private Long polkaVerifiedRoleId;
     private Long polkaVerifiedChanId;
     private Long captchaVerifiedRoleId;
+    private String mapDbfilePasswd;
 }

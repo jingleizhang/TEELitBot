@@ -19,6 +19,11 @@ import net.dv8tion.jda.api.utils.ChunkingFilter;
 import net.dv8tion.jda.api.utils.MemberCachePolicy;
 import net.dv8tion.jda.api.utils.cache.CacheFlag;
 import org.springframework.stereotype.Component;
+import org.mapdb.DB;
+import org.mapdb.DBMaker;
+import org.mapdb.Serializer;
+
+import javax.annotation.PreDestroy;
 import javax.security.auth.login.LoginException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -32,20 +37,25 @@ public class Bot {
     private PrivateMsgHandler privateMsgHandler;
     private BotProperties botProperties;
     private PolkadotVerifyService polkadotVerifyService;
+    private DB db;
 
     public Bot(BotProperties botProperties, PolkadotVerifyService polkadotVerifyService) throws LoginException {
         this.botProperties = botProperties;
         this.polkadotVerifyService = polkadotVerifyService;
 
+        db = DBMaker.fileDB("discord_bot.db").checksumHeaderBypass()
+                .allocateStartSize(10 * 1024 * 1024).allocateIncrement(1024 * 1024).make();
+
         int threadpoolSize = 10;
         threadpool = Executors.newScheduledThreadPool(threadpoolSize);
         waiter = new EventWaiter();
         reactionHandler = new ReactionHandler(this);
-        privateMsgHandler = new PrivateMsgHandler(this.botProperties, this.polkadotVerifyService);
+        privateMsgHandler = new PrivateMsgHandler(this.botProperties, this.polkadotVerifyService, this.db);
         privateMsgHandler.setWaiter(waiter);
         cmdHandler = new CommandHandler(this, this.botProperties, this.polkadotVerifyService);
 
-        EmbedUtils.setEmbedBuilder(() -> new EmbedBuilder().setColor(Constants.BOT_EMBED).setFooter(botProperties.getFooter()));
+        EmbedUtils.setEmbedBuilder(
+                () -> new EmbedBuilder().setColor(Constants.BOT_EMBED).setFooter(botProperties.getFooter()));
 
         JDA jda = JDABuilder
                 .createDefault(botProperties.getToken())
@@ -53,21 +63,23 @@ public class Bot {
                         GatewayIntent.GUILD_MEMBERS,
                         GatewayIntent.GUILD_PRESENCES,
                         GatewayIntent.GUILD_MESSAGES,
-                        GatewayIntent.DIRECT_MESSAGES
-                )
+                        GatewayIntent.DIRECT_MESSAGES)
                 .setMemberCachePolicy(MemberCachePolicy.ONLINE)
                 .enableCache(CacheFlag.CLIENT_STATUS)
+                .disableCache(CacheFlag.VOICE_STATE, CacheFlag.MEMBER_OVERRIDES)
                 .setChunkingFilter(ChunkingFilter.NONE)
                 .setMaxBufferSize(40960)
-                .addEventListeners(new Listener(this, this.botProperties), waiter, cmdHandler, reactionHandler, privateMsgHandler)
+                .addEventListeners(new Listener(this, this.botProperties), waiter, cmdHandler, reactionHandler,
+                        privateMsgHandler)
                 .setStatus(OnlineStatus.ONLINE)
+                .disableIntents(GatewayIntent.GUILD_MESSAGE_TYPING)
                 .setActivity(Activity.playing("Booting..."))
                 .build();
 
-        //wait for loading all resources
-        //jda.awaitReady();
+        // wait for loading all resources
+        // jda.awaitReady();
 
-        //log.info("started LITBot: {}", this);
+        // log.info("started LITBot: {}", this);
         System.out.println("started LITBot");
         polkadotVerifyService.setJDA(jda);
     }
@@ -87,4 +99,11 @@ public class Bot {
     public ReactionHandler getReactionHandler() {
         return reactionHandler;
     }
+
+    @PreDestroy
+    public void destroy() {
+        System.out.println("db close");
+        db.close();
+    }
+
 }
